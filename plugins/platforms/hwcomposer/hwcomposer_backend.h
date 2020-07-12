@@ -20,6 +20,8 @@
 // libhybris
 #include <hardware/hwcomposer.h>
 #include <hwcomposer_window.h>
+#include <hybris/hwc2/hwc2_compatibility_layer.h>
+#include <hybris/hwcomposerwindow/hwcomposer.h>
 // needed as hwcomposer_window.h includes EGL which on non-arm includes Xlib
 #include <fixx11h.h>
 
@@ -40,7 +42,7 @@ class HwcomposerOutput : public AbstractWaylandOutput
 {
     Q_OBJECT
 public:
-    HwcomposerOutput(hwc_composer_device_1_t *device);
+    HwcomposerOutput(uint32_t hwcVersion, hwc_composer_device_1_t *device, hwc2_compat_display_t* hwc2_primary_display);
     ~HwcomposerOutput() override;
     bool isValid() const;
 
@@ -49,7 +51,9 @@ Q_SIGNALS:
     void dpmsModeRequested(KWaylandServer::OutputInterface::DpmsMode mode);
 private:
     QSize m_pixelSize;
+    uint32_t m_hwcVersion;
     hwc_composer_device_1_t *m_device;
+    hwc2_compat_display_t *m_hwc2_primary_display;
 };
 
 class HwcomposerBackend : public Platform
@@ -77,6 +81,11 @@ public:
     hwc_composer_device_1_t *device() const {
         return m_device;
     }
+
+    int deviceVersion() const {
+        return m_hwcVersion;
+    }
+
     void enableVSync(bool enable);
     void waitVSync();
     void wakeVSync();
@@ -89,6 +98,14 @@ public:
         return QVector<CompositingType>{OpenGLCompositing};
     }
 
+    hwc2_compat_device_t *hwc2_device() const {
+        return m_hwc2device;
+    }
+
+    hwc2_compat_display_t *hwc2_display() const {
+        return m_hwc2_primary_display;
+    }
+
 Q_SIGNALS:
     void outputBlankChanged();
 
@@ -97,6 +114,8 @@ private Q_SLOTS:
     void screenBrightnessChanged(int brightness) {
         m_oldScreenBrightness = brightness;
     }
+
+    void hwc2_toggleBlankOutput();
 
 private:
     void initLights();
@@ -112,6 +131,12 @@ private:
     QWaitCondition m_vsyncWaitCondition;
     QScopedPointer<BacklightInputEventFilter> m_filter;
     QScopedPointer<HwcomposerOutput> m_output;
+    
+    void RegisterCallbacks();
+
+    hwc2_compat_device_t *m_hwc2device = nullptr;
+    hwc2_compat_display_t* m_hwc2_primary_display = nullptr;
+    KWayland::Server::OutputInterface *hwc2_createOutput();
 };
 
 class HwcomposerWindow : public HWComposerNativeWindow
@@ -126,6 +151,10 @@ private:
     HwcomposerWindow(HwcomposerBackend *backend);
     HwcomposerBackend *m_backend;
     hwc_display_contents_1_t **m_list;
+
+    hwc2_compat_layer_t* m_hwc2_primary_layer = nullptr;
+    hwc2_compat_display_t *m_hwc2_primary_display = nullptr;
+    int lastPresentFence = -1;
 };
 
 class BacklightInputEventFilter : public InputEventFilter

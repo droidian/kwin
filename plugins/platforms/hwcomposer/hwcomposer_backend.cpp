@@ -22,8 +22,12 @@
 // hybris/android
 #include <hardware/hardware.h>
 #include <hardware/lights.h>
+#include <android-config.h>
+#include <hybris/hwcomposerwindow/hwcomposer.h>
+#include <hybris/hwc2/hwc2_compatibility_layer.h>
 // linux
 #include <linux/input.h>
+#include <sync/sync.h>
 
 // based on test_hwcomposer.c from libhybris project (Apache 2 licensed)
 
@@ -152,31 +156,47 @@ HwcomposerBackend::~HwcomposerBackend()
     }
 }
 
-void HwcomposerBackend::init()
+typedef struct : public HWC2EventListener
 {
-    hw_module_t *hwcModule = nullptr;
-    if (hw_get_module(HWC_HARDWARE_MODULE_ID, (const hw_module_t **)&hwcModule) != 0) {
-        qCWarning(KWIN_HWCOMPOSER) << "Failed to get hwcomposer module";
-        emit initFailed();
+    HwcomposerBackend* backend;
+} HwcProcs_v20;
+
+void hwc2_callback_vsync(HWC2EventListener* listener, int32_t sequenceId,
+                         hwc2_display_t display, int64_t timestamp)
+{
+    static_cast<const HwcProcs_v20 *>(listener)->backend->wakeVSync();
+}
+
+void hwc2_callback_hotplug(HWC2EventListener* listener, int32_t sequenceId,
+                           hwc2_display_t display, bool connected,
+                           bool primaryDisplay)
+{
+    qDebug("onHotplugReceived(%d, %" PRIu64 ", %s, %s)",
+           sequenceId, display,
+           connected ? "connected" : "disconnected",
+           primaryDisplay ? "primary" : "external");
+    hwc2_compat_device_on_hotplug(static_cast<const HwcProcs_v20 *>(listener)->backend->hwc2_device(), display, connected);
+}
+
+void hwc2_callback_refresh(HWC2EventListener* listener, int32_t sequenceId,
+                           hwc2_display_t display)
+{
+}
+
+void HwcomposerBackend::RegisterCallbacks()
+{
+    if (m_hwcVersion == HWC_DEVICE_API_VERSION_2_0) {
+        static int composerSequenceId = 0;
+
+        HwcProcs_v20* procs = new HwcProcs_v20();
+        procs->on_vsync_received = hwc2_callback_vsync;
+        procs->on_hotplug_received = hwc2_callback_hotplug;
+        procs->on_refresh_received = hwc2_callback_refresh;
+        procs->backend = this;
+
+        hwc2_compat_device_register_callback(m_hwc2device, procs,
+                                             composerSequenceId++);
         return;
-    }
-
-    hwc_composer_device_1_t *hwcDevice = nullptr;
-    if (hwc_open_1(hwcModule, &hwcDevice) != 0) {
-        qCWarning(KWIN_HWCOMPOSER) << "Failed to open hwcomposer device";
-        emit initFailed();
-        return;
-    }
-
-    // unblank, setPowerMode?
-    m_device = hwcDevice;
-
-    m_hwcVersion = m_device->common.version;
-    if ((m_hwcVersion & 0xffff0000) == 0) {
-        // Assume header version is always 1
-        uint32_t header_version = 1;
-        // Legacy version encoding
-        m_hwcVersion = (m_hwcVersion << 16) | header_version;
     }
 
     // register callbacks
@@ -197,7 +217,48 @@ void HwcomposerBackend::init()
         Q_UNUSED(connected)
     };
     m_device->registerProcs(m_device, procs);
+}
 
+void HwcomposerBackend::init()
+{
+    hw_module_t *hwcModule = nullptr;
+    if (hw_get_module(HWC_HARDWARE_MODULE_ID, (const hw_module_t **)&hwcModule) != 0) {
+        qCWarning(KWIN_HWCOMPOSER) << "Failed to get hwcomposer module";
+        emit initFailed();
+        return;
+    }
+
+    hw_device_t *hwDevice = nullptr;
+    hwc_composer_device_1_t *hwcDevice = nullptr;
+    if (hwcModule->methods->open(hwcModule, HWC_HARDWARE_COMPOSER, &hwDevice) != 0) {
+        qCWarning(KWIN_HWCOMPOSER) << "Failed to open hwcomposer device, probably it's hwc2";
+        m_hwcVersion = HWC_DEVICE_API_VERSION_2_0;
+    } else {
+        hwc_composer_device_1_t *hwcDevice = (hwc_composer_device_1_t*) hwDevice;
+        m_hwcVersion = hwcDevice->common.version;
+        if ((m_hwcVersion & 0xffff0000) == 0) {
+            // Assume header version is always 1
+            uint32_t header_version = 1;
+            // Legacy version encoding
+            m_hwcVersion = (m_hwcVersion << 16) | header_version;
+        }
+    }
+
+    if (m_hwcVersion == HWC_DEVICE_API_VERSION_2_0)
+        m_hwc2device = hwc2_compat_device_new(false);
+    else
+        m_device = hwcDevice;
+
+    RegisterCallbacks();
+    if (m_hwcVersion == HWC_DEVICE_API_VERSION_2_0) {
+        for (int i = 0; i < 5 * 1000; ++i) {
+            // Wait at most 5s for hotplug events
+            if ((m_hwc2_primary_display =
+                 hwc2_compat_device_get_display_by_id(m_hwc2device, 0)))
+            break;
+            usleep(1000);
+        }
+    }
     //move to HwcomposerOutput + signal
 
     initLights();
@@ -206,7 +267,7 @@ void HwcomposerBackend::init()
     input()->prependInputEventFilter(m_filter.data());
 
     // get display configuration
-    m_output.reset(new HwcomposerOutput(hwcDevice));
+    m_output.reset(new HwcomposerOutput(m_hwcVersion, hwcDevice, m_hwc2_primary_display));
     if (!m_output->isValid()) {
         emit initFailed();
         return;
@@ -289,6 +350,10 @@ void HwcomposerBackend::initLights()
 
 void HwcomposerBackend::toggleBlankOutput()
 {
+    if (m_hwcVersion == HWC_DEVICE_API_VERSION_2_0) {
+        hwc2_toggleBlankOutput();
+        return;
+    }
     if (!m_device) {
         return;
     }
@@ -306,6 +371,30 @@ void HwcomposerBackend::toggleBlankOutput()
     if (m_outputBlank) {
          enableVSync(false);
     }
+    // enable/disable compositor repainting when blanked
+    setOutputsEnabled(!m_outputBlank);
+    if (Compositor *compositor = Compositor::self()) {
+        if (!m_outputBlank) {
+            compositor->addRepaintFull();
+        }
+    }
+    emit outputBlankChanged();
+}
+
+void HwcomposerBackend::hwc2_toggleBlankOutput()
+{
+    if (!m_hwc2device) {
+        return;
+    }
+    m_outputBlank = !m_outputBlank;
+    toggleScreenBrightness();
+
+    // only disable Vsync, enable happens after next frame rendered
+    if (m_outputBlank)
+        enableVSync(false);
+
+    hwc2_compat_display_set_power_mode(m_hwc2_primary_display, m_outputBlank ? HWC2_POWER_MODE_OFF : HWC2_POWER_MODE_ON);
+
     // enable/disable compositor repainting when blanked
     setOutputsEnabled(!m_outputBlank);
     if (Compositor *compositor = Compositor::self()) {
@@ -336,7 +425,11 @@ void HwcomposerBackend::enableVSync(bool enable)
     if (m_hasVsync == enable) {
         return;
     }
-    const int result = m_device->eventControl(m_device, 0, HWC_EVENT_VSYNC, enable ? 1: 0);
+    int result = 0;
+    if (m_hwcVersion == HWC_DEVICE_API_VERSION_2_0)
+        hwc2_compat_display_set_vsync_enabled(m_hwc2_primary_display, enable ? HWC2_VSYNC_ENABLE : HWC2_VSYNC_DISABLE);
+    else
+        result = m_device->eventControl(m_device, 0, HWC_EVENT_VSYNC, enable ? 1 : 0);
     m_hasVsync = enable && (result == 0);
 }
 
@@ -414,82 +507,166 @@ HwcomposerWindow::HwcomposerWindow(HwcomposerBackend *backend)
     , m_backend(backend)
 {
     setBufferCount(3);
+    uint32_t hwcVersion = m_backend->deviceVersion();
+    if (hwcVersion == HWC_DEVICE_API_VERSION_2_0) {
+        m_hwc2_primary_display = m_backend->hwc2_display();
+        hwc2_compat_layer_t *layer = m_hwc2_primary_layer =
+            hwc2_compat_display_create_layer(m_hwc2_primary_display);
 
-    size_t size = sizeof(hwc_display_contents_1_t) + 2 * sizeof(hwc_layer_1_t);
-    hwc_display_contents_1_t *list = (hwc_display_contents_1_t*)malloc(size);
-    m_list = (hwc_display_contents_1_t**)malloc(HWC_NUM_DISPLAY_TYPES * sizeof(hwc_display_contents_1_t *));
-    for (int i = 0; i < HWC_NUM_DISPLAY_TYPES; ++i) {
-        m_list[i] = nullptr;
+        hwc2_compat_layer_set_composition_type(layer, HWC2_COMPOSITION_CLIENT);
+        hwc2_compat_layer_set_blend_mode(layer, HWC2_BLEND_MODE_NONE);
+        hwc2_compat_layer_set_source_crop(layer, 0.0f, 0.0f, m_backend->size().width(), m_backend->size().height());
+        hwc2_compat_layer_set_display_frame(layer, 0, 0, m_backend->size().width(), m_backend->size().height());
+        hwc2_compat_layer_set_visible_region(layer, 0, 0, m_backend->size().width(), m_backend->size().height());
     }
-    // Assign buffer only to the first item, otherwise you get tearing
-    // if passed the same to multiple places
-    // see https://github.com/mer-hybris/qt5-qpa-hwcomposer-plugin/commit/f1d802151e8a4f5d10d60eb8de8e07552b93a34a
-    m_list[0] = list;
-    const hwc_rect_t rect = {
-        0,
-        0,
-        m_backend->size().width(),
-        m_backend->size().height()
-    };
-    initLayer(&list->hwLayers[0], rect, HWC_FRAMEBUFFER);
-    initLayer(&list->hwLayers[1], rect, HWC_FRAMEBUFFER_TARGET);
+    else
+    {
+        size_t size = sizeof(hwc_display_contents_1_t) + 2 * sizeof(hwc_layer_1_t);
+        hwc_display_contents_1_t *list = (hwc_display_contents_1_t *)malloc(size);
+        m_list = (hwc_display_contents_1_t **)malloc(HWC_NUM_DISPLAY_TYPES * sizeof(hwc_display_contents_1_t *));
+        for (int i = 0; i < HWC_NUM_DISPLAY_TYPES; ++i)
+        {
+            m_list[i] = nullptr;
+        }
+        // Assign buffer only to the first item, otherwise you get tearing
+        // if passed the same to multiple places
+        // see https://github.com/mer-hybris/qt5-qpa-hwcomposer-plugin/commit/f1d802151e8a4f5d10d60eb8de8e07552b93a34a
+        m_list[0] = list;
+        const hwc_rect_t rect = {
+            0,
+            0,
+            m_backend->size().width(),
+            m_backend->size().height()};
+        initLayer(&list->hwLayers[0], rect, HWC_FRAMEBUFFER);
+        initLayer(&list->hwLayers[1], rect, HWC_FRAMEBUFFER_TARGET);
 
-    list->retireFenceFd = -1;
-    list->flags = HWC_GEOMETRY_CHANGED;
-    list->numHwLayers = 2;
+        list->retireFenceFd = -1;
+        list->flags = HWC_GEOMETRY_CHANGED;
+        list->numHwLayers = 2;
+    }
 }
 
 HwcomposerWindow::~HwcomposerWindow()
 {
-    // TODO: cleanup
+    if (lastPresentFence != -1) {
+        close(lastPresentFence);
+    }
 }
 
 void HwcomposerWindow::present(HWComposerNativeWindowBuffer *buffer)
 {
     m_backend->waitVSync();
-    hwc_composer_device_1_t *device = m_backend->device();
+    uint32_t hwcVersion = m_backend->deviceVersion();
+    if (hwcVersion == HWC_DEVICE_API_VERSION_2_0) {
+        uint32_t numTypes = 0;
+        uint32_t numRequests = 0;
+        int displayId = 0;
+        hwc2_error_t error = HWC2_ERROR_NONE;
 
-    auto fblayer = &m_list[0]->hwLayers[1];
-    fblayer->handle = buffer->handle;
-    fblayer->acquireFenceFd = getFenceBufferFd(buffer);
-    fblayer->releaseFenceFd = -1;
+        int acquireFenceFd = HWCNativeBufferGetFence(buffer);
+        int syncBeforeSet = 0;
 
-    int err = device->prepare(device, 1, m_list);
-    Q_ASSERT(err == 0);
+        if (syncBeforeSet && acquireFenceFd >= 0) {
+            sync_wait(acquireFenceFd, -1);
+            close(acquireFenceFd);
+            acquireFenceFd = -1;
+        }
 
-    err = device->set(device, 1, m_list);
-    Q_ASSERT(err == 0);
-    m_backend->enableVSync(true);
-    setFenceBufferFd(buffer, fblayer->releaseFenceFd);
+        hwc2_compat_display_set_power_mode(m_hwc2_primary_display, HWC2_POWER_MODE_ON);
 
-    if (m_list[0]->retireFenceFd != -1) {
-        close(m_list[0]->retireFenceFd);
-        m_list[0]->retireFenceFd = -1;
+        error = hwc2_compat_display_validate(m_hwc2_primary_display, &numTypes,
+                                             &numRequests);
+        if (error != HWC2_ERROR_NONE && error != HWC2_ERROR_HAS_CHANGES) {
+            qDebug("prepare: validate failed for display %d: %d", displayId, error);
+            return;
+        }
+
+        if (numTypes || numRequests) {
+            qDebug("prepare: validate required changes for display %d: %d",
+                   displayId, error);
+            return;
+        }
+
+        error = hwc2_compat_display_accept_changes(m_hwc2_primary_display);
+        if (error != HWC2_ERROR_NONE) {
+            qDebug("prepare: acceptChanges failed: %d", error);
+            return;
+        }
+
+        hwc2_compat_display_set_client_target(m_hwc2_primary_display, /* slot */ 0, buffer,
+                                              acquireFenceFd,
+                                              HAL_DATASPACE_UNKNOWN);
+
+        m_backend->enableVSync(true);
+        int presentFence = -1;
+        hwc2_compat_display_present(m_hwc2_primary_display, &presentFence);
+
+        if (lastPresentFence != -1) {
+            sync_wait(lastPresentFence, -1);
+            close(lastPresentFence);
+        }
+
+        lastPresentFence = presentFence != -1 ? dup(presentFence) : -1;
+
+        HWCNativeBufferSetFence(buffer, presentFence);
+    } else {
+        hwc_composer_device_1_t *device = m_backend->device();
+
+        auto fblayer = &m_list[0]->hwLayers[1];
+        fblayer->handle = buffer->handle;
+        fblayer->acquireFenceFd = getFenceBufferFd(buffer);
+        fblayer->releaseFenceFd = -1;
+
+        int err = device->prepare(device, 1, m_list);
+        Q_ASSERT(err == 0);
+
+        err = device->set(device, 1, m_list);
+        Q_ASSERT(err == 0);
+        m_backend->enableVSync(true);
+        setFenceBufferFd(buffer, fblayer->releaseFenceFd);
+
+        if (m_list[0]->retireFenceFd != -1) {
+            close(m_list[0]->retireFenceFd);
+            m_list[0]->retireFenceFd = -1;
+        }
+        m_list[0]->flags = 0;
     }
-    m_list[0]->flags = 0;
 }
 
-HwcomposerOutput::HwcomposerOutput(hwc_composer_device_1_t *device)
+HwcomposerOutput::HwcomposerOutput(uint32_t hwcVersion, hwc_composer_device_1_t *device, hwc2_compat_display_t *hwc2_primary_display)
     : AbstractWaylandOutput()
+    , m_hwcVersion(hwcVersion)
     , m_device(device)
+    , m_hwc2_primary_display(hwc2_primary_display)
 {
-    uint32_t configs[5];
-    size_t numConfigs = 5;
-    if (device->getDisplayConfigs(device, 0, configs, &numConfigs) != 0) {
-        qCWarning(KWIN_HWCOMPOSER) << "Failed to get hwcomposer display configurations";
-        return;
+    int32_t attr_values[5];
+    if (hwcVersion == HWC_DEVICE_API_VERSION_2_0) {
+        HWC2DisplayConfig *config = hwc2_compat_display_get_active_config(hwc2_primary_display);
+        Q_ASSERT(config);
+        attr_values[0] = config->width;
+        attr_values[1] = config->height;
+        attr_values[2] = config->dpiX;
+        attr_values[3] = config->dpiY;
+        attr_values[4] = config->vsyncPeriod;
+    } else {
+        uint32_t configs[5];
+        size_t numConfigs = 5;
+        if (device->getDisplayConfigs(device, 0, configs, &numConfigs) != 0) {
+            qCWarning(KWIN_HWCOMPOSER) << "Failed to get hwcomposer display configurations";
+            return;
+        }
+
+        uint32_t attributes[] = {
+            HWC_DISPLAY_WIDTH,
+            HWC_DISPLAY_HEIGHT,
+            HWC_DISPLAY_DPI_X,
+            HWC_DISPLAY_DPI_Y,
+            HWC_DISPLAY_VSYNC_PERIOD ,
+            HWC_DISPLAY_NO_ATTRIBUTE
+        };
+        device->getDisplayAttributes(device, 0, configs[0], attributes, attr_values);
     }
 
-    int32_t attr_values[5];
-    uint32_t attributes[] = {
-        HWC_DISPLAY_WIDTH,
-        HWC_DISPLAY_HEIGHT,
-        HWC_DISPLAY_DPI_X,
-        HWC_DISPLAY_DPI_Y,
-        HWC_DISPLAY_VSYNC_PERIOD ,
-        HWC_DISPLAY_NO_ATTRIBUTE
-    };
-    device->getDisplayAttributes(device, 0, configs[0], attributes, attr_values);
     QSize pixelSize(attr_values[0], attr_values[1]);
     if (pixelSize.isEmpty()) {
         return;
@@ -522,7 +699,9 @@ HwcomposerOutput::HwcomposerOutput(hwc_composer_device_1_t *device)
 
 HwcomposerOutput::~HwcomposerOutput()
 {
-    hwc_close_1(m_device);
+    if (m_hwcVersion != HWC_DEVICE_API_VERSION_2_0) {
+        hwc_close_1(m_device);
+    }
 }
 
 bool HwcomposerOutput::isValid() const

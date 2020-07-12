@@ -15,6 +15,7 @@ target_link_libraries(KWinWaylandHwcomposerBackend
     libhybris::hwcomposer
     libhybris::hybriseglplatform
     libhybris::libhardware
+    -lhwc2 -lsync
 )
 
 install(
