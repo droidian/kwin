@@ -26,5 +26,4 @@ usr/share/kservices5/kwin*.desktop
 usr/share/kservices5/kwin/
 usr/share/kservicetypes5/kwin*.desktop
 usr/share/kwin/
-usr/share/locale/
 usr/share/qlogging-categories5/
