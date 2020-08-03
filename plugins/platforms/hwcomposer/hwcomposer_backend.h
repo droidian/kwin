@@ -42,7 +42,11 @@ class HwcomposerOutput : public AbstractWaylandOutput
 {
     Q_OBJECT
 public:
+#if defined(HWC_DEVICE_API_VERSION_2_0)
     HwcomposerOutput(uint32_t hwcVersion, hwc_composer_device_1_t *device, hwc2_compat_display_t* hwc2_primary_display);
+#else
+    HwcomposerOutput(uint32_t hwcVersion, hwc_composer_device_1_t *device, void* hwc2_primary_display);
+#endif
     ~HwcomposerOutput() override;
     bool isValid() const;
 
@@ -53,7 +57,11 @@ private:
     QSize m_pixelSize;
     uint32_t m_hwcVersion;
     hwc_composer_device_1_t *m_device;
+#if defined(HWC_DEVICE_API_VERSION_2_0)
     hwc2_compat_display_t *m_hwc2_primary_display;
+#else
+    void *m_hwc2_primary_display;
+#endif
 };
 
 class HwcomposerBackend : public Platform
@@ -98,6 +106,7 @@ public:
         return QVector<CompositingType>{OpenGLCompositing};
     }
 
+#if defined(HWC_DEVICE_API_VERSION_2_0)
     hwc2_compat_device_t *hwc2_device() const {
         return m_hwc2device;
     }
@@ -105,6 +114,7 @@ public:
     hwc2_compat_display_t *hwc2_display() const {
         return m_hwc2_primary_display;
     }
+#endif
 
 Q_SIGNALS:
     void outputBlankChanged();
@@ -131,12 +141,14 @@ private:
     QWaitCondition m_vsyncWaitCondition;
     QScopedPointer<BacklightInputEventFilter> m_filter;
     QScopedPointer<HwcomposerOutput> m_output;
-    
     void RegisterCallbacks();
 
+#if defined(HWC_DEVICE_API_VERSION_2_0)
     hwc2_compat_device_t *m_hwc2device = nullptr;
     hwc2_compat_display_t* m_hwc2_primary_display = nullptr;
-    KWayland::Server::OutputInterface *hwc2_createOutput();
+#else
+    void *m_hwc2_primary_display = nullptr;
+#endif
 };
 
 class HwcomposerWindow : public HWComposerNativeWindow
@@ -151,10 +163,11 @@ private:
     HwcomposerWindow(HwcomposerBackend *backend);
     HwcomposerBackend *m_backend;
     hwc_display_contents_1_t **m_list;
-
-    hwc2_compat_layer_t* m_hwc2_primary_layer = nullptr;
-    hwc2_compat_display_t *m_hwc2_primary_display = nullptr;
     int lastPresentFence = -1;
+
+#if defined(HWC_DEVICE_API_VERSION_2_0)
+    hwc2_compat_display_t *m_hwc2_primary_display = nullptr;
+#endif
 };
 
 class BacklightInputEventFilter : public InputEventFilter

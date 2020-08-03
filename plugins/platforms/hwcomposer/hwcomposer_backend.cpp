@@ -156,6 +156,7 @@ HwcomposerBackend::~HwcomposerBackend()
     }
 }
 
+#if defined(HWC_DEVICE_API_VERSION_2_0)
 typedef struct : public HWC2EventListener
 {
     HwcomposerBackend* backend;
@@ -182,9 +183,11 @@ void hwc2_callback_refresh(HWC2EventListener* listener, int32_t sequenceId,
                            hwc2_display_t display)
 {
 }
+#endif
 
 void HwcomposerBackend::RegisterCallbacks()
 {
+#if defined(HWC_DEVICE_API_VERSION_2_0)
     if (m_hwcVersion == HWC_DEVICE_API_VERSION_2_0) {
         static int composerSequenceId = 0;
 
@@ -198,6 +201,7 @@ void HwcomposerBackend::RegisterCallbacks()
                                              composerSequenceId++);
         return;
     }
+#endif
 
     // register callbacks
     hwc_procs_t *procs = new hwc_procs_t;
@@ -231,8 +235,14 @@ void HwcomposerBackend::init()
     hw_device_t *hwDevice = nullptr;
     hwc_composer_device_1_t *hwcDevice = nullptr;
     if (hwcModule->methods->open(hwcModule, HWC_HARDWARE_COMPOSER, &hwDevice) != 0) {
+#if defined(HWC_DEVICE_API_VERSION_2_0)
         qCWarning(KWIN_HWCOMPOSER) << "Failed to open hwcomposer device, probably it's hwc2";
         m_hwcVersion = HWC_DEVICE_API_VERSION_2_0;
+#else
+        qCWarning(KWIN_HWCOMPOSER) << "Failed to open hwcomposer device";
+        emit initFailed();
+        return;
+#endif
     } else {
         hwc_composer_device_1_t *hwcDevice = (hwc_composer_device_1_t*) hwDevice;
         m_hwcVersion = hwcDevice->common.version;
@@ -244,12 +254,15 @@ void HwcomposerBackend::init()
         }
     }
 
+#if defined(HWC_DEVICE_API_VERSION_2_0)
     if (m_hwcVersion == HWC_DEVICE_API_VERSION_2_0)
         m_hwc2device = hwc2_compat_device_new(false);
     else
+#endif
         m_device = hwcDevice;
 
     RegisterCallbacks();
+#if defined(HWC_DEVICE_API_VERSION_2_0)
     if (m_hwcVersion == HWC_DEVICE_API_VERSION_2_0) {
         for (int i = 0; i < 5 * 1000; ++i) {
             // Wait at most 5s for hotplug events
@@ -259,6 +272,7 @@ void HwcomposerBackend::init()
             usleep(1000);
         }
     }
+#endif
     //move to HwcomposerOutput + signal
 
     initLights();
@@ -350,10 +364,12 @@ void HwcomposerBackend::initLights()
 
 void HwcomposerBackend::toggleBlankOutput()
 {
+#if defined(HWC_DEVICE_API_VERSION_2_0)
     if (m_hwcVersion == HWC_DEVICE_API_VERSION_2_0) {
         hwc2_toggleBlankOutput();
         return;
     }
+#endif
     if (!m_device) {
         return;
     }
@@ -426,9 +442,11 @@ void HwcomposerBackend::enableVSync(bool enable)
         return;
     }
     int result = 0;
+#if defined(HWC_DEVICE_API_VERSION_2_0)
     if (m_hwcVersion == HWC_DEVICE_API_VERSION_2_0)
         hwc2_compat_display_set_vsync_enabled(m_hwc2_primary_display, enable ? HWC2_VSYNC_ENABLE : HWC2_VSYNC_DISABLE);
     else
+#endif
         result = m_device->eventControl(m_device, 0, HWC_EVENT_VSYNC, enable ? 1 : 0);
     m_hasVsync = enable && (result == 0);
 }
@@ -508,9 +526,10 @@ HwcomposerWindow::HwcomposerWindow(HwcomposerBackend *backend)
 {
     setBufferCount(3);
     uint32_t hwcVersion = m_backend->deviceVersion();
+#if defined(HWC_DEVICE_API_VERSION_2_0)
     if (hwcVersion == HWC_DEVICE_API_VERSION_2_0) {
         m_hwc2_primary_display = m_backend->hwc2_display();
-        hwc2_compat_layer_t *layer = m_hwc2_primary_layer =
+        hwc2_compat_layer_t *layer =
             hwc2_compat_display_create_layer(m_hwc2_primary_display);
 
         hwc2_compat_layer_set_composition_type(layer, HWC2_COMPOSITION_CLIENT);
@@ -518,9 +537,8 @@ HwcomposerWindow::HwcomposerWindow(HwcomposerBackend *backend)
         hwc2_compat_layer_set_source_crop(layer, 0.0f, 0.0f, m_backend->size().width(), m_backend->size().height());
         hwc2_compat_layer_set_display_frame(layer, 0, 0, m_backend->size().width(), m_backend->size().height());
         hwc2_compat_layer_set_visible_region(layer, 0, 0, m_backend->size().width(), m_backend->size().height());
-    }
-    else
-    {
+    } else {
+#endif
         size_t size = sizeof(hwc_display_contents_1_t) + 2 * sizeof(hwc_layer_1_t);
         hwc_display_contents_1_t *list = (hwc_display_contents_1_t *)malloc(size);
         m_list = (hwc_display_contents_1_t **)malloc(HWC_NUM_DISPLAY_TYPES * sizeof(hwc_display_contents_1_t *));
@@ -543,7 +561,9 @@ HwcomposerWindow::HwcomposerWindow(HwcomposerBackend *backend)
         list->retireFenceFd = -1;
         list->flags = HWC_GEOMETRY_CHANGED;
         list->numHwLayers = 2;
+#if defined(HWC_DEVICE_API_VERSION_2_0)
     }
+#endif
 }
 
 HwcomposerWindow::~HwcomposerWindow()
@@ -557,6 +577,7 @@ void HwcomposerWindow::present(HWComposerNativeWindowBuffer *buffer)
 {
     m_backend->waitVSync();
     uint32_t hwcVersion = m_backend->deviceVersion();
+#if defined(HWC_DEVICE_API_VERSION_2_0)
     if (hwcVersion == HWC_DEVICE_API_VERSION_2_0) {
         uint32_t numTypes = 0;
         uint32_t numRequests = 0;
@@ -610,6 +631,7 @@ void HwcomposerWindow::present(HWComposerNativeWindowBuffer *buffer)
 
         HWCNativeBufferSetFence(buffer, presentFence);
     } else {
+#endif
         hwc_composer_device_1_t *device = m_backend->device();
 
         auto fblayer = &m_list[0]->hwLayers[1];
@@ -630,7 +652,9 @@ void HwcomposerWindow::present(HWComposerNativeWindowBuffer *buffer)
             m_list[0]->retireFenceFd = -1;
         }
         m_list[0]->flags = 0;
+#if defined(HWC_DEVICE_API_VERSION_2_0)
     }
+#endif
 }
 
 HwcomposerOutput::HwcomposerOutput(uint32_t hwcVersion, hwc_composer_device_1_t *device, hwc2_compat_display_t *hwc2_primary_display)
@@ -640,6 +664,7 @@ HwcomposerOutput::HwcomposerOutput(uint32_t hwcVersion, hwc_composer_device_1_t 
     , m_hwc2_primary_display(hwc2_primary_display)
 {
     int32_t attr_values[5];
+#if defined(HWC_DEVICE_API_VERSION_2_0)
     if (hwcVersion == HWC_DEVICE_API_VERSION_2_0) {
         HWC2DisplayConfig *config = hwc2_compat_display_get_active_config(hwc2_primary_display);
         Q_ASSERT(config);
@@ -649,6 +674,7 @@ HwcomposerOutput::HwcomposerOutput(uint32_t hwcVersion, hwc_composer_device_1_t 
         attr_values[3] = config->dpiY;
         attr_values[4] = config->vsyncPeriod;
     } else {
+#endif
         uint32_t configs[5];
         size_t numConfigs = 5;
         if (device->getDisplayConfigs(device, 0, configs, &numConfigs) != 0) {
@@ -665,7 +691,9 @@ HwcomposerOutput::HwcomposerOutput(uint32_t hwcVersion, hwc_composer_device_1_t 
             HWC_DISPLAY_NO_ATTRIBUTE
         };
         device->getDisplayAttributes(device, 0, configs[0], attributes, attr_values);
+#if defined(HWC_DEVICE_API_VERSION_2_0)
     }
+#endif
 
     QSize pixelSize(attr_values[0], attr_values[1]);
     if (pixelSize.isEmpty()) {
@@ -699,9 +727,17 @@ HwcomposerOutput::HwcomposerOutput(uint32_t hwcVersion, hwc_composer_device_1_t 
 
 HwcomposerOutput::~HwcomposerOutput()
 {
-    if (m_hwcVersion != HWC_DEVICE_API_VERSION_2_0) {
+#if defined(HWC_DEVICE_API_VERSION_2_0)
+    if (m_hwcVersion == HWC_DEVICE_API_VERSION_2_0) {
+        if (m_hwc2_primary_display != NULL) {
+            free(m_hwc2_primary_display);
+        }
+    } else {
+#endif
         hwc_close_1(m_device);
+#if defined(HWC_DEVICE_API_VERSION_2_0)
     }
+#endif
 }
 
 bool HwcomposerOutput::isValid() const
