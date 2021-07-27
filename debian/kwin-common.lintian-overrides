@@ -1,0 +1,3 @@
+kwin-common: package-name-doesnt-match-sonames libkcmkwincommon5 libkwin5
+kwin-common: lacks-unversioned-link-to-shared-library usr/lib/*/libkwin.so
+kwin-common: lacks-unversioned-link-to-shared-library usr/lib/*/libkcmkwincommon.so.5.*
