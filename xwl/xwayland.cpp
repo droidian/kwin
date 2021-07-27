@@ -128,7 +128,7 @@ void Xwayland::start()
     m_xwaylandProcess->setProgram(QStringLiteral("Xwayland"));
     QProcessEnvironment env = m_app->processStartupEnvironment();
     env.insert("WAYLAND_SOCKET", QByteArray::number(wlfd));
-    env.insert("EGL_PLATFORM", QByteArrayLiteral("DRM"));
+    env.insert("EGL_PLATFORM", QByteArrayLiteral("hwcomposer"));
     m_xwaylandProcess->setProcessEnvironment(env);
     m_xwaylandProcess->setArguments({QStringLiteral("-displayfd"),
                            QString::number(pipeFds[1]),
