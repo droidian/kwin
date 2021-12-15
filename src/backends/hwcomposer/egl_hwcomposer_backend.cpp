@@ -9,6 +9,15 @@
 #include "egl_hwcomposer_backend.h"
 #include "hwcomposer_backend.h"
 #include "logging.h"
+#include "screens.h"
+
+// kwin libs
+#include <kwinglplatform.h>
+#include <kwineglimagetexture.h>
+
+#include "basiceglsurfacetexture_internal.h"
+#include "basiceglsurfacetexture_wayland.h"
+#include "openglbackend.h"
 
 namespace KWin
 {
@@ -19,14 +28,13 @@ EglHwcomposerBackend::EglHwcomposerBackend(HwcomposerBackend *backend)
 {
     // EGL is always direct rendering
     setIsDirectRendering(true);
-    setSyncsToVBlank(true);
+    setSupportsNativeFence(true);
 }
 
 EglHwcomposerBackend::~EglHwcomposerBackend()
 {
     cleanup();
 }
-
 bool EglHwcomposerBackend::initializeEgl()
 {
     // cannot use initClientExtensions as that crashes in libhybris
@@ -125,53 +133,30 @@ bool EglHwcomposerBackend::makeContextCurrent()
     return true;
 }
 
-void EglHwcomposerBackend::present()
+QRegion EglHwcomposerBackend::beginFrame(AbstractOutput *output)
 {
-    if (lastDamage().isEmpty()) {
-        return;
-    }
+    Q_UNUSED(output)
+    makeContextCurrent();
+    return m_damageJournal.accumulate(0, screens()->geometry());
 
-    eglSwapBuffers(eglDisplay(), surface());
-    setLastDamage(QRegion());
 }
 
-void EglHwcomposerBackend::screenGeometryChanged(const QSize &size)
+void EglHwcomposerBackend::endFrame(AbstractOutput *output, const QRegion &renderedRegion, const QRegion &damagedRegion)
 {
-    Q_UNUSED(size)
-}
-
-QRegion EglHwcomposerBackend::beginFrame(int screenId)
-{
-    Q_UNUSED(screenId)
-    present();
-
-    // TODO: buffer age?
-    // triggers always a full repaint
-    return QRegion(QRect(QPoint(0, 0), m_backend->size()));
-}
-
-void EglHwcomposerBackend::endFrame(int screenId, const QRegion &renderedRegion, const QRegion &damagedRegion)
-{
-    Q_UNUSED(screenId)
+    Q_UNUSED(output)
     Q_UNUSED(damagedRegion)
-    setLastDamage(renderedRegion);
+    eglSwapBuffers(eglDisplay(), surface());
+    m_damageJournal.add(renderedRegion);
 }
 
-SceneOpenGLTexturePrivate *EglHwcomposerBackend::createBackendTexture(SceneOpenGLTexture *texture)
+SurfaceTexture *EglHwcomposerBackend::createSurfaceTextureInternal(SurfacePixmapInternal *pixmap)
 {
-    return new EglHwcomposerTexture(texture, this);
+    return new BasicEGLSurfaceTextureInternal(this, pixmap);
 }
 
-bool EglHwcomposerBackend::usesOverlayWindow() const
+SurfaceTexture *EglHwcomposerBackend::createSurfaceTextureWayland(SurfacePixmapWayland *pixmap)
 {
-    return false;
+    return new BasicEGLSurfaceTextureWayland(this, pixmap);
 }
-
-EglHwcomposerTexture::EglHwcomposerTexture(SceneOpenGLTexture *texture, EglHwcomposerBackend *backend)
-    : AbstractEglTexture(texture, backend)
-{
-}
-
-EglHwcomposerTexture::~EglHwcomposerTexture() = default;
 
 }

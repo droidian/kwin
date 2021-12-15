@@ -9,27 +9,26 @@
 #ifndef KWIN_EGL_HWCOMPOSER_BACKEND_H
 #define KWIN_EGL_HWCOMPOSER_BACKEND_H
 #include "abstract_egl_backend.h"
+#include "utils.h"
+#include <KWaylandServer/outputdevice_v2_interface.h>
 
+#define ROTATE_EGL 0
 namespace KWin
 {
 
 class HwcomposerBackend;
 class HwcomposerWindow;
-
+class HwcomposerOutput;
 class EglHwcomposerBackend : public AbstractEglBackend
 {
 public:
     EglHwcomposerBackend(HwcomposerBackend *backend);
     virtual ~EglHwcomposerBackend();
-    bool usesOverlayWindow() const override;
-    SceneOpenGLTexturePrivate *createBackendTexture(SceneOpenGLTexture *texture) override;
-    void screenGeometryChanged(const QSize &size) override;
-    QRegion beginFrame(int screenId) override;
-    void endFrame(int screenId, const QRegion &renderedRegion, const QRegion &damagedRegion) override;
+    SurfaceTexture *createSurfaceTextureInternal(SurfacePixmapInternal *pixmap) override;
+    SurfaceTexture *createSurfaceTextureWayland(SurfacePixmapWayland *pixmap) override;   
+    QRegion beginFrame(AbstractOutput *output) override;
+    void endFrame(AbstractOutput *output, const QRegion &renderedRegion, const QRegion &damagedRegion) override;
     void init() override;
-
-protected:
-    void present() override;
 
 private:
     bool initializeEgl();
@@ -38,16 +37,7 @@ private:
     bool makeContextCurrent();
     HwcomposerBackend *m_backend;
     HwcomposerWindow *m_nativeSurface = nullptr;
-};
-
-class EglHwcomposerTexture : public AbstractEglTexture
-{
-public:
-    virtual ~EglHwcomposerTexture();
-
-private:
-    friend class EglHwcomposerBackend;
-    EglHwcomposerTexture(SceneOpenGLTexture *texture, EglHwcomposerBackend *backend);
+    DamageJournal m_damageJournal;
 };
 
 }
