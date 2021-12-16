@@ -296,16 +296,16 @@ static QString automaticBackendSelection()
     if (qEnvironmentVariableIsSet("DISPLAY")) {
         return s_x11Plugin;
     }
-    // Only default to drm when there's dri drivers. This way fbdev will be
-    // used when running using nomodeset
-    if (QFileInfo::exists("/dev/dri")) {
-        return s_drmPlugin;
-    }
 #if HAVE_LIBHYBRIS
     if (qEnvironmentVariableIsSet("ANDROID_ROOT")) {
         return s_hwcomposerPlugin;
     }
 #endif
+    // Only default to drm when there's dri drivers. This way fbdev will be
+    // used when running using nomodeset
+    if (QFileInfo::exists("/dev/dri")) {
+        return s_drmPlugin;
+    }
     return s_fbdevPlugin;
 }
 
