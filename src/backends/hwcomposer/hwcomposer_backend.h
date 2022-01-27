@@ -133,22 +133,8 @@ private:
     bool updateOutputs();
     void updateOutputsEnabled();  
     void toggleScreenBrightness();
-
-
-protected:/*! ---cursor ----*/
-    void doHideCursor() override;
-    void doShowCursor() override;
-    void doSetSoftwareCursor() override;
-
-
-private:
-    void updateCursor();
-    void moveCursor();
-    void initCursor();
     void initLights();
 
-
-private:
     light_device_t *m_lights = nullptr;
     int m_vsyncInterval = 16;
     bool m_hasVsync = false;

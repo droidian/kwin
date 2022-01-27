@@ -9,7 +9,7 @@
 #ifndef KWIN_EGL_HWCOMPOSER_BACKEND_H
 #define KWIN_EGL_HWCOMPOSER_BACKEND_H
 #include "abstract_egl_backend.h"
-#include "utils.h"
+#include "utils/common.h"
 #include <KWaylandServer/outputdevice_v2_interface.h>
 
 #define ROTATE_EGL 0

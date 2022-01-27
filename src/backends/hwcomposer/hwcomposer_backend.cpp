@@ -9,7 +9,6 @@
 #include "hwcomposer_backend.h"
 
 #include "composite.h"
-#include "cursor.h"
 #include "egl_hwcomposer_backend.h"
 #include "logging.h"
 #include "main.h"
@@ -434,59 +433,6 @@ void HwcomposerBackend::wakeVSync()
     m_vsyncMutex.unlock();
 }
 
-void HwcomposerBackend::doHideCursor()
-{
-}
-void HwcomposerBackend::doShowCursor()
-{
-    if (usesSoftwareCursor()) {
-        return;
-    }
-    updateCursor();
-}
-void HwcomposerBackend::doSetSoftwareCursor()
-{
-}
-
-void HwcomposerBackend::updateCursor()
-{
-    if (isSoftwareCursorForced() || isCursorHidden()) {
-        return;
-    }
-
-    auto cursor = Cursors::self()->currentCursor();
-    if (cursor->image().isNull()) {
-        doHideCursor();
-        return;
-    }
-
-    bool success = false;
-
-    setSoftwareCursor(!success);
-}
-void HwcomposerBackend::moveCursor() {
-}
-void HwcomposerBackend::initCursor() {
-    setSoftwareCursorForced(true);
-    if (waylandServer()->seat()->hasPointer()) {
-        // The cursor is visible by default, do nothing.
-    } else {
-        hideCursor();
-    }
-
-    connect(waylandServer()->seat(), &KWaylandServer::SeatInterface::hasPointerChanged, this,
-            [this] {
-                if (waylandServer()->seat()->hasPointer()) {
-                    showCursor();
-                } else {
-                    hideCursor();
-                }
-            });
-    // now we have screens and can set cursors, so start tracking
-    connect(Cursors::self(), &Cursors::currentCursorChanged, this, &HwcomposerBackend::updateCursor);
-    connect(Cursors::self(), &Cursors::positionChanged, this, &HwcomposerBackend::moveCursor);
-}
-
 HwcomposerWindow::HwcomposerWindow(HwcomposerBackend *backend) //! [dba debug: 2021-06-18]
     : HWComposerNativeWindow( backend->size().width(),  backend->size().height(), HAL_PIXEL_FORMAT_RGBA_8888), m_backend(backend)
 {
@@ -500,7 +446,6 @@ HwcomposerWindow::HwcomposerWindow(HwcomposerBackend *backend) //! [dba debug: 2
     hwc2_compat_layer_set_source_crop(layer, 0.0f, 0.0f, m_backend->size().width(), m_backend->size().height());
     hwc2_compat_layer_set_display_frame(layer, 0, 0, m_backend->size().width(), m_backend->size().height());
     hwc2_compat_layer_set_visible_region(layer, 0, 0, m_backend->size().width(), m_backend->size().height());
-    backend->initCursor();
 }
 
 HwcomposerWindow::~HwcomposerWindow()
