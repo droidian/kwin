@@ -272,7 +272,7 @@ KWaylandServer::LinuxDmaBufV1ClientBuffer *EglDmabuf::yuvImport(const QVector<KW
                                                                 const QSize &size,
                                                                 quint32 flags)
 {
-    YuvFormat yuvFormat;
+    YuvFormat yuvFormat { 0 };
     for (YuvFormat f : yuvFormats) {
         if (f.format == format) {
             yuvFormat = f;
