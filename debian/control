@@ -103,7 +103,7 @@ Rules-Requires-Root: no
 Package: kwin-common
 Architecture: any
 Depends: hwdata,
-         kwin-data (= ${source:Version}),
+         kwin-data (= ${binary:Version}),
          libkf5globalaccel-bin,
          qml-module-org-kde-kquickcontrolsaddons,
          qml-module-qtmultimedia,
